@@ -68,9 +68,9 @@ trivy image -q --format json --output "$LIVE/v2.json" trivy-demo:v2
 echo; echo "Full scan of v2:"; counts "$LIVE/v2.json"
 
 # ---------------------------------------------------------------- v3
-step "4. Fix 2: patch the remaining packages" "apk upgrade pulls fixes released after the base image was published."
+step "4. Fix 2: patch the remaining packages" "apk upgrade pulls fixes released after the base image was published. --no-cache makes Docker really re-run it."
 run diff dockerfiles/Dockerfile.v2 dockerfiles/Dockerfile.v3
-run docker build -q -f dockerfiles/Dockerfile.v3 -t trivy-demo:v3 .
+run docker build -q --no-cache -f dockerfiles/Dockerfile.v3 -t trivy-demo:v3 .
 run trivy image trivy-demo:v3
 trivy image -q --format json --output "$LIVE/v3.json" trivy-demo:v3
 echo; echo "Full scan of v3:"; counts "$LIVE/v3.json"
@@ -97,7 +97,7 @@ printf '%s\n' "${Y}\$ ./scripts/gate.sh trivy-demo:v3${N}"
 if ./scripts/gate.sh trivy-demo:v3 > /dev/null 2>&1; then
   printf '%s\n' "${G}${B}  ✓ GATE PASSED (exit code 0) - safe to deploy${N}"
 else
-  printf '%s\n' "${R}  gate failed - a new CVE has appeared since the report; rebuild picks up fixes${N}"
+  printf '%s\n' "${R}  gate failed - a fix for a new CVE is not in the Alpine repo yet; see the v3 table above${N}"
 fi
 
 # ---------------------------------------------------------------- deploy

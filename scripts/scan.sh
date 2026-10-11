@@ -13,7 +13,9 @@ mkdir -p reports
 for v in v1 v2 v3; do
   case $v in v1) name=before ;; v2) name=after ;; v3) name=final ;; esac
   echo "=== Building trivy-demo:$v ==="
-  docker build -f "dockerfiles/Dockerfile.$v" -t "trivy-demo:$v" .
+  # v3 runs "apk upgrade": skip the build cache so it always fetches the latest fixes
+  nocache=""; [ "$v" = v3 ] && nocache="--no-cache"
+  docker build $nocache -f "dockerfiles/Dockerfile.$v" -t "trivy-demo:$v" .
   echo "=== Scanning trivy-demo:$v ==="
   trivy image "trivy-demo:$v"
   trivy image --format json --output "reports/$name.json" "trivy-demo:$v"
