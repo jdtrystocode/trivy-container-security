@@ -12,6 +12,13 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# macOS: Docker Desktop's CLI is not always on PATH (e.g. in bash when the
+# PATH line was only added to ~/.zprofile). Add it if it exists.
+for d in /Applications/Docker.app/Contents/Resources/bin /usr/local/bin /opt/homebrew/bin; do
+  [ -d "$d" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+done
+export PATH
+
 BONUS=0
 [ "${1:-}" = "--bonus" ] && BONUS=1
 LIVE=reports/live

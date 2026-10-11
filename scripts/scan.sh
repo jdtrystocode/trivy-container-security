@@ -2,6 +2,11 @@
 # Build every image version, scan it with Trivy and save JSON reports.
 # Usage: ./scripts/scan.sh
 set -euo pipefail
+# macOS: add Docker Desktop's CLI to PATH if it is not there already.
+for d in /Applications/Docker.app/Contents/Resources/bin /usr/local/bin /opt/homebrew/bin; do
+  [ -d "$d" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+done
+export PATH
 cd "$(dirname "$0")/.."
 mkdir -p reports
 
