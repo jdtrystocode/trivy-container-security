@@ -1,0 +1,44 @@
+# Main pipeline: runs on every push to main and every pull request.
+# Builds the root Dockerfile (= v3), saves a JSON report, then gates on
+# fixable HIGH/CRITICAL vulnerabilities.
+name: container-security-scan
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t trivy-demo:${{ github.sha }} .
+
+      - name: Trivy scan - full report (JSON)
+        run: |
+          mkdir -p reports
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/reports:/reports" \
+            aquasec/trivy:0.75.0 image \
+            --format json --output /reports/trivy-report.json \
+            trivy-demo:${{ github.sha }}
+
+      - name: Trivy security gate - fail on HIGH/CRITICAL
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.75.0 image \
+            --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+            trivy-demo:${{ github.sha }}
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: reports/trivy-report.json

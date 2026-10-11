@@ -1,0 +1,3 @@
+.DS_Store
+reports/trivy-report.json
+reports/sbom.cdx.json

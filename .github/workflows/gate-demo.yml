@@ -1,0 +1,65 @@
+# Demo pipeline: builds v1, v2 and v3 side by side so the Actions page
+# shows the security gate blocking v1 and v2 (red) and passing v3 (green).
+# Run it from the Actions tab -> "security-gate-demo" -> "Run workflow".
+name: security-gate-demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # lets the SARIF results appear in the Security tab
+
+jobs:
+  gate:
+    name: gate (${{ matrix.version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # run all three even when v1 fails
+      matrix:
+        version: [ v1, v2, v3 ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build trivy-demo:${{ matrix.version }}
+        run: docker build -f dockerfiles/Dockerfile.${{ matrix.version }} -t trivy-demo:${{ matrix.version }} .
+
+      - name: Trivy scan - summary table
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.75.0 image --severity HIGH,CRITICAL \
+            trivy-demo:${{ matrix.version }}
+
+      - name: Trivy scan - SARIF for GitHub Security tab
+        run: |
+          mkdir -p reports
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/reports:/reports" \
+            aquasec/trivy:0.75.0 image \
+            --format sarif --output /reports/trivy-${{ matrix.version }}.sarif \
+            trivy-demo:${{ matrix.version }}
+
+      - name: Upload SARIF to Security tab
+        if: always()
+        continue-on-error: true   # needs a public repo (or GitHub Advanced Security)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/trivy-${{ matrix.version }}.sarif
+          category: trivy-${{ matrix.version }}
+
+      - name: Security gate - fail on fixable HIGH/CRITICAL
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.75.0 image \
+            --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+            trivy-demo:${{ matrix.version }}
+
+      - name: Deploy (only reached if the gate passed)
+        run: |
+          docker run -d --name trivy-demo-container -p 8081:80 trivy-demo:${{ matrix.version }}
+          sleep 2
+          curl -s http://localhost:8081 | grep -i "Container Security Demo"

@@ -1,0 +1,5 @@
+# v2 - remediation 1: updated base image (Alpine 3.24.2)
+# Trivy result: 4 vulnerabilities (HIGH 2, MEDIUM 1, UNKNOWN 1)
+FROM nginx:1.30.5-alpine3.24
+COPY app/index.html /usr/share/nginx/html/index.html
+EXPOSE 80

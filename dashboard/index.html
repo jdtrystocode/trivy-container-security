@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trivy Container Security Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a scan console. Version switcher on top drives every panel below; summary first, then evidence (CVEs), then the pipeline gate. */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --sunk:#e9edf3; --line:#d5dbe5;
+  --fg:#141a26; --muted:#5a6578; --accent:#2b4fd8; --accent-ink:#ffffff;
+  --crit:#b3172f; --high:#d9561c; --med:#c18a0b; --low:#4a7bb0; --unk:#8a93a3;
+  --ok:#17834d; --fail:#b3172f;
+  --code-bg:#0f1522; --code-fg:#d8deea; --code-add:#7fd6a0; --code-del:#f19aa4;
+  --display:"Archivo",ui-sans-serif,system-ui,sans-serif;
+  --body:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0d111a; --surface:#151b27; --sunk:#1c2433; --line:#2a3446;
+  --fg:#e6eaf2; --muted:#98a3b8; --accent:#7d97ff; --accent-ink:#0d111a;
+  --crit:#ff5a6e; --high:#ff8a4c; --med:#e8b83a; --low:#7eaee0; --unk:#8f99ab;
+  --ok:#4fd18b; --fail:#ff5a6e; --code-bg:#0a0e16; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d111a; --surface:#151b27; --sunk:#1c2433; --line:#2a3446;
+  --fg:#e6eaf2; --muted:#98a3b8; --accent:#7d97ff; --accent-ink:#0d111a;
+  --crit:#ff5a6e; --high:#ff8a4c; --med:#e8b83a; --low:#7eaee0; --unk:#8f99ab;
+  --ok:#4fd18b; --fail:#ff5a6e; --code-bg:#0a0e16; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--body);padding-inline:16px;padding-block:28px 56px}
+.wrap{max-width:1120px;margin:0 auto;display:grid;gap:28px}
+h1,h2,h3{font-family:var(--display);font-stretch:80%;margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:clamp(28px,5vw,44px);font-weight:800;line-height:1.05}
+h2{font-size:22px;font-weight:700}
+h3{font-size:15px;font-weight:700;font-stretch:90%}
+.eyebrow{font:600 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.muted{color:var(--muted)}
+.mono{font-family:var(--mono)}
+.num{font-variant-numeric:tabular-nums}
+a{color:var(--accent)}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+header{display:grid;gap:12px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;font:13px var(--mono);color:var(--muted)}
+.meta b{color:var(--fg);font-weight:600}
+
+/* hero: the reduction */
+.hero{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.hcell{padding:18px 20px;display:grid;gap:6px;border-right:1px solid var(--line);cursor:pointer;text-align:left;background:none;border-top:0;border-bottom:0;border-left:0;position:relative}
+.hcell:last-child{border-right:0}
+.hcell[aria-pressed="true"]{background:var(--sunk)}
+.hcell[aria-pressed="true"]::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--accent)}
+.hcell .big{font:800 clamp(40px,8vw,64px)/1 var(--display);font-stretch:75%;font-variant-numeric:tabular-nums}
+.hcell .tag{font:600 13px var(--mono)}
+.hcell .sub{font-size:13px;color:var(--muted)}
+.arrow{color:var(--muted);font-family:var(--mono);font-size:12px}
+.stack{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--sunk)}
+.stack span{display:block;height:100%}
+
+.grid2{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:20px}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:grid;gap:14px;align-content:start;min-width:0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:14px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;font-family:var(--mono);font-size:13px;min-width:0;overflow-wrap:anywhere}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:999px;font:600 11px/1.6 var(--mono);letter-spacing:.04em;border:1px solid currentColor}
+.pill.bad{color:var(--fail)} .pill.good{color:var(--ok)}
+
+pre.code{margin:0;background:var(--code-bg);color:var(--code-fg);border-radius:8px;padding:14px 16px;font:13px/1.6 var(--mono);overflow-x:auto}
+pre.code .c{color:#7d8799} pre.code .add{color:var(--code-add)} pre.code .del{color:var(--code-del)}
+
+.sevrow{display:grid;grid-template-columns:84px 1fr 40px;align-items:center;gap:10px;font-size:13px}
+.sevrow .bar{height:10px;background:var(--sunk);border-radius:3px;overflow:hidden}
+.sevrow .bar span{display:block;height:100%}
+.sevrow .n{text-align:right;font-family:var(--mono)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:0}
+
+/* trend chart */
+.chart svg{width:100%;height:auto;display:block}
+.chart text{fill:var(--muted);font:11px var(--mono)}
+.chart .lbl{fill:var(--fg);font:600 13px var(--mono)}
+
+/* CVE explorer */
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 10px;font:600 12px var(--mono);cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+input[type=search]{flex:1 1 200px;min-width:0;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:6px;padding:7px 10px;font:13px var(--mono)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;max-height:460px;overflow-y:auto}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:720px}
+th{position:sticky;top:0;background:var(--sunk);text-align:left;font:600 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+td.mono{font-size:12px;white-space:nowrap}
+td.sev{white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.sevtag{font:600 11px var(--mono);padding:1px 6px;border-radius:3px;color:#fff}
+.empty{padding:36px 16px;text-align:center;color:var(--muted)}
+.empty b{display:block;font:800 28px var(--display);font-stretch:80%;color:var(--ok);margin-bottom:4px}
+
+/* pipeline */
+.pipe{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.stage{border:1px solid var(--line);border-radius:8px;padding:12px;display:grid;gap:4px;background:var(--surface);transition:border-color .25s,background .25s;min-width:0}
+.stage .st{font:600 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.stage .nm{font:700 15px var(--display);font-stretch:90%}
+.stage .cmd{font:11px var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.stage.run{border-color:var(--accent)}
+.stage.run .st{color:var(--accent)}
+.stage.pass{border-color:var(--ok)} .stage.pass .st{color:var(--ok)}
+.stage.fail{border-color:var(--fail);background:color-mix(in srgb,var(--fail) 8%,var(--surface))} .stage.fail .st{color:var(--fail)}
+.stage.skip{opacity:.45}
+.runbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.btn{background:var(--accent);color:var(--accent-ink);border:0;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:default}
+.log{background:var(--code-bg);color:var(--code-fg);border-radius:8px;padding:12px 14px;font:12px/1.65 var(--mono);min-height:120px;overflow-x:auto;white-space:pre}
+.log .e{color:var(--code-del)} .log .o{color:var(--code-add)} .log .d{color:#7d8799}
+
+.cmp{min-width:640px}
+.cmp td:first-child{font-weight:600}
+.cmp tr.us td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+footer{font-size:13px;color:var(--muted)}
+
+@media (max-width:820px){
+  .grid2{grid-template-columns:minmax(0,1fr)}
+  .pipe{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:520px){
+  .hero{grid-template-columns:minmax(0,1fr)}
+  .hcell{border-right:0;border-bottom:1px solid var(--line)}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+</head><body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">DevOps Theory IA · Security (DevSecOps) stage</span>
+    <h1>Container Security Scanning with Trivy</h1>
+    <p class="muted" style="max-width:68ch;margin:0">One NGINX web app, three Docker images, one scanner. Pick an image version to see what Trivy found in it, then run it through the CI/CD security gate.</p>
+    <div class="meta">
+      <span>Trivy <b>0.75.0</b></span><span>Docker <b>29.7.2</b></span><span>Scanned <b>5 Oct 2026</b></span>
+      <span>Kavya Mehta · Jayaditya Singhvi · Muaaz Khan</span>
+    </div>
+  </header>
+
+  <section class="hero" id="hero" aria-label="Image versions"></section>
+
+  <section class="grid2">
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <h2 id="vtitle"></h2><span id="vpill"></span>
+      </div>
+      <dl class="kv" id="vkv"></dl>
+      <pre class="code" id="vdocker"></pre>
+      <p id="vnote" style="margin:0"></p>
+    </div>
+    <div class="panel">
+      <h3>Findings by severity</h3>
+      <div id="sev" style="display:grid;gap:8px"></div>
+      <h3 style="margin-top:6px">Total vulnerabilities per version</h3>
+      <div class="chart" id="trend"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap">
+      <h2>CVE explorer</h2><span class="muted mono" id="ccount" style="font-size:13px"></span>
+    </div>
+    <div class="tools" id="chips"></div>
+    <div class="tools"><input type="search" id="q" placeholder="Filter by CVE, package or title (e.g. curl, openssl)" aria-label="Filter CVEs"></div>
+    <div id="pkgs" class="muted" style="font-size:13px"></div>
+    <div class="tablewrap" id="tw"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Security gate simulation</h2>
+    <p class="muted" style="margin:0;max-width:70ch">The same five stages as the project's Jenkinsfile and GitHub Actions workflow. The gate runs <span class="mono">trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed</span>, so any fixable High or Critical finding stops the pipeline before Deploy.</p>
+    <div class="runbar">
+      <div class="tools" id="pchips" role="group" aria-label="Image to run"></div>
+      <button class="btn" id="runbtn">Run pipeline</button>
+    </div>
+    <div class="pipe" id="pipe"></div>
+    <div class="log" id="log" aria-live="polite"><span class="d">Pick an image and press Run pipeline.</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Trivy against the alternatives</h2>
+    <div class="tablewrap" style="max-height:none">
+      <table class="cmp">
+        <thead><tr><th>Tool</th><th>Setup</th><th>Account</th><th>Ease of use</th><th>Scale &amp; speed</th><th>Pipeline fit</th><th>Coverage</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr class="us"><td>Trivy</td><td>One binary, DB auto-downloads</td><td>No</td><td>High</td><td>High (~1 s cached)</td><td>High</td><td>Images, repo, IaC, secrets, K8s, SBOM</td><td>Free (Apache 2.0)</td></tr>
+          <tr><td>Docker Scout</td><td>Built into Docker Desktop</td><td>Docker</td><td>High</td><td>Medium–High</td><td>Medium–High</td><td>Images, SBOM</td><td>Free tier / paid</td></tr>
+          <tr><td>Snyk Container</td><td>CLI + auth token</td><td>Snyk</td><td>Medium–High</td><td>High (cloud)</td><td>High</td><td>Broad (multi-product)</td><td>Free tier / paid</td></tr>
+          <tr><td>Grype</td><td>One binary, DB auto-downloads</td><td>No</td><td>High</td><td>High</td><td>High</td><td>Images, SBOMs</td><td>Free (Apache 2.0)</td></tr>
+          <tr><td>Clair</td><td>Server + PostgreSQL</td><td>No</td><td>Low–Medium</td><td>High (central)</td><td>Medium</td><td>Images</td><td>Free (Apache 2.0)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Data loaded from the project's own Trivy JSON reports: <span class="mono">reports/before.json</span>, <span class="mono">after.json</span>, <span class="mono">final.json</span>. K J Somaiya School of Engineering, Somaiya Vidyavihar University.</footer>
+</div>
+
+<script>
+const DATA = {"v1":{"target":"trivy-demo:v1 (alpine 3.15.4)","os":{"Family":"alpine","Name":"3.15.4","EOSL":true},"size":23506944,"created":"2026-10-05T13:04:50.493279+05:30","vulns":[{"id":"CVE-2022-32207","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"CRITICAL","title":"curl: Unpreserved file permissions","url":"https://avd.aquasec.com/nvd/cve-2022-32207","cvss":9.8},{"id":"CVE-2022-32221","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r4","sev":"CRITICAL","title":"curl: POST following PUT confusion","url":"https://avd.aquasec.com/nvd/cve-2022-32221","cvss":9.8},{"id":"CVE-2023-23914","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r6","sev":"CRITICAL","title":"curl: HSTS ignored on multiple requests","url":"https://avd.aquasec.com/nvd/cve-2023-23914","cvss":9.1},{"id":"CVE-2023-38545","pkg":"curl","inst":"7.80.0-r1","fix":"8.4.0-r0","sev":"CRITICAL","title":"curl: heap based buffer overflow in the SOCKS5 proxy handshake","url":"https://avd.aquasec.com/nvd/cve-2023-38545","cvss":9.8},{"id":"CVE-2022-27780","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"HIGH","title":"curl: percent-encoded path separator in URL host","url":"https://avd.aquasec.com/nvd/cve-2022-27780","cvss":7.5},{"id":"CVE-2022-27781","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"HIGH","title":"curl: CERTINFO never-ending busy-loop","url":"https://avd.aquasec.com/nvd/cve-2022-27781","cvss":7.5},{"id":"CVE-2022-27782","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"HIGH","title":"curl: TLS and SSH connection too eager reuse","url":"https://avd.aquasec.com/nvd/cve-2022-27782","cvss":7.5},{"id":"CVE-2022-42915","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r4","sev":"HIGH","title":"curl: HTTP proxy double-free","url":"https://avd.aquasec.com/nvd/cve-2022-42915","cvss":8.1},{"id":"CVE-2022-42916","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r4","sev":"HIGH","title":"curl: HSTS bypass via IDN","url":"https://avd.aquasec.com/nvd/cve-2022-42916","cvss":7.5},{"id":"CVE-2022-43551","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r5","sev":"HIGH","title":"curl: HSTS bypass via IDN","url":"https://avd.aquasec.com/nvd/cve-2022-43551","cvss":7.5},{"id":"CVE-2023-27533","pkg":"curl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"HIGH","title":"curl: TELNET option IAC injection","url":"https://avd.aquasec.com/nvd/cve-2023-27533","cvss":8.8},{"id":"CVE-2023-27534","pkg":"curl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"HIGH","title":"curl: SFTP path ~ resolving discrepancy","url":"https://avd.aquasec.com/nvd/cve-2023-27534","cvss":8.8},{"id":"CVE-2023-28319","pkg":"curl","inst":"7.80.0-r1","fix":"8.1.0-r0","sev":"HIGH","title":"curl: use after free in SSH sha256 fingerprint check","url":"https://avd.aquasec.com/nvd/cve-2023-28319","cvss":7.5},{"id":"CVE-2023-38039","pkg":"curl","inst":"7.80.0-r1","fix":"8.3.0-r0","sev":"HIGH","title":"curl: out of heap memory issue due to missing limit on header quantity","url":"https://avd.aquasec.com/nvd/cve-2023-38039","cvss":7.5},{"id":"CVE-2022-32205","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"MEDIUM","title":"curl: Set-Cookie denial of service","url":"https://avd.aquasec.com/nvd/cve-2022-32205","cvss":4.3},{"id":"CVE-2022-32206","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"MEDIUM","title":"curl: HTTP compression denial of service","url":"https://avd.aquasec.com/nvd/cve-2022-32206","cvss":6.5},{"id":"CVE-2022-32208","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"MEDIUM","title":"curl: FTP-KRB bad message verification","url":"https://avd.aquasec.com/nvd/cve-2022-32208","cvss":5.9},{"id":"CVE-2022-43552","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r5","sev":"MEDIUM","title":"curl: Use-after-free triggered by an HTTP proxy deny response","url":"https://avd.aquasec.com/nvd/cve-2022-43552","cvss":5.9},{"id":"CVE-2023-23915","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r6","sev":"MEDIUM","title":"curl: HSTS amnesia with --parallel","url":"https://avd.aquasec.com/nvd/cve-2023-23915","cvss":6.5},{"id":"CVE-2023-23916","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r6","sev":"MEDIUM","title":"curl: HTTP multi-header compression denial of service","url":"https://avd.aquasec.com/nvd/cve-2023-23916","cvss":6.5},{"id":"CVE-2023-27535","pkg":"curl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"MEDIUM","title":"curl: FTP too eager connection reuse","url":"https://avd.aquasec.com/nvd/cve-2023-27535","cvss":5.9},{"id":"CVE-2023-27536","pkg":"curl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"MEDIUM","title":"curl: GSS delegation too eager connection re-use","url":"https://avd.aquasec.com/nvd/cve-2023-27536","cvss":5.9},{"id":"CVE-2023-27537","pkg":"curl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"MEDIUM","title":"curl: HSTS double-free","url":"https://avd.aquasec.com/nvd/cve-2023-27537","cvss":5.9},{"id":"CVE-2023-27538","pkg":"curl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"MEDIUM","title":"curl: SSH connection too eager reuse still","url":"https://avd.aquasec.com/nvd/cve-2023-27538","cvss":5.5},{"id":"CVE-2023-28320","pkg":"curl","inst":"7.80.0-r1","fix":"8.1.0-r0","sev":"MEDIUM","title":"curl: siglongjmp race condition may lead to crash","url":"https://avd.aquasec.com/nvd/cve-2023-28320","cvss":5.9},{"id":"CVE-2023-28321","pkg":"curl","inst":"7.80.0-r1","fix":"8.1.0-r0","sev":"MEDIUM","title":"curl: IDN wildcard match may lead to Improper Cerificate Validation","url":"https://avd.aquasec.com/nvd/cve-2023-28321","cvss":5.9},{"id":"CVE-2023-46218","pkg":"curl","inst":"7.80.0-r1","fix":"8.5.0-r0","sev":"MEDIUM","title":"curl: information disclosure by exploiting a mixed case flaw","url":"https://avd.aquasec.com/nvd/cve-2023-46218","cvss":6.5},{"id":"CVE-2023-46219","pkg":"curl","inst":"7.80.0-r1","fix":"8.5.0-r0","sev":"MEDIUM","title":"curl: excessively long file name may lead to unknown HSTS status","url":"https://avd.aquasec.com/nvd/cve-2023-46219","cvss":5.3},{"id":"CVE-2022-35252","pkg":"curl","inst":"7.80.0-r1","fix":"7.80.0-r3","sev":"LOW","title":"curl: Incorrect handling of control code characters in cookies","url":"https://avd.aquasec.com/nvd/cve-2022-35252","cvss":3.7},{"id":"CVE-2023-28322","pkg":"curl","inst":"7.80.0-r1","fix":"8.1.0-r0","sev":"LOW","title":"curl: more POST-after-PUT confusion","url":"https://avd.aquasec.com/nvd/cve-2023-28322","cvss":3.7},{"id":"CVE-2023-38546","pkg":"curl","inst":"7.80.0-r1","fix":"8.4.0-r0","sev":"LOW","title":"curl: cookie injection with none file","url":"https://avd.aquasec.com/nvd/cve-2023-38546","cvss":3.7},{"id":"CVE-2022-27405","pkg":"freetype","inst":"2.11.1-r1","fix":"2.11.1-r2","sev":"HIGH","title":"FreeType: Segmentation violation via FNT_Size_Request","url":"https://avd.aquasec.com/nvd/cve-2022-27405","cvss":7.5},{"id":"CVE-2022-27406","pkg":"freetype","inst":"2.11.1-r1","fix":"2.11.1-r2","sev":"HIGH","title":"Freetype: Segmentation violation via FT_Request_Size","url":"https://avd.aquasec.com/nvd/cve-2022-27406","cvss":7.5},{"id":"CVE-2022-4450","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r0","sev":"HIGH","title":"openssl: double free after calling PEM_read_bio_ex","url":"https://avd.aquasec.com/nvd/cve-2022-4450","cvss":7.5},{"id":"CVE-2023-0215","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r0","sev":"HIGH","title":"openssl: use-after-free following BIO_new_NDEF","url":"https://avd.aquasec.com/nvd/cve-2023-0215","cvss":7.5},{"id":"CVE-2023-0286","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r0","sev":"HIGH","title":"openssl: X.400 address type confusion in X.509 GeneralName","url":"https://avd.aquasec.com/nvd/cve-2023-0286","cvss":7.4},{"id":"CVE-2023-0464","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r2","sev":"HIGH","title":"openssl: Denial of service by excessive resource usage in verifying X509 policy constraints","url":"https://avd.aquasec.com/nvd/cve-2023-0464","cvss":7.5},{"id":"CVE-2022-2097","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1q-r0","sev":"MEDIUM","title":"openssl: AES OCB fails to encrypt some bytes","url":"https://avd.aquasec.com/nvd/cve-2022-2097","cvss":5.3},{"id":"CVE-2022-4304","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r0","sev":"MEDIUM","title":"openssl: timing attack in RSA Decryption implementation","url":"https://avd.aquasec.com/nvd/cve-2022-4304","cvss":5.9},{"id":"CVE-2023-0465","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r2","sev":"MEDIUM","title":"openssl: Invalid certificate policies in leaf certificates are silently ignored","url":"https://avd.aquasec.com/nvd/cve-2023-0465","cvss":5.3},{"id":"CVE-2023-2650","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1u-r0","sev":"MEDIUM","title":"openssl: Possible DoS translating ASN.1 object identifiers","url":"https://avd.aquasec.com/nvd/cve-2023-2650","cvss":6.5},{"id":"CVE-2023-3446","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1u-r2","sev":"MEDIUM","title":"openssl: Excessive time spent checking DH keys and parameters","url":"https://avd.aquasec.com/nvd/cve-2023-3446","cvss":5.3},{"id":"CVE-2023-3817","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1v-r0","sev":"MEDIUM","title":"OpenSSL: Excessive time spent checking DH q parameter value","url":"https://avd.aquasec.com/nvd/cve-2023-3817","cvss":5.3},{"id":"CVE-2023-5678","pkg":"libcrypto1.1","inst":"1.1.1n-r0","fix":"1.1.1w-r1","sev":"MEDIUM","title":"openssl: Generating excessively long X9.42 DH keys or checking excessively long X9.42 DH keys or parameters may be very slow","url":"https://avd.aquasec.com/nvd/cve-2023-5678","cvss":5.3},{"id":"CVE-2022-32207","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"CRITICAL","title":"curl: Unpreserved file permissions","url":"https://avd.aquasec.com/nvd/cve-2022-32207","cvss":9.8},{"id":"CVE-2022-32221","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r4","sev":"CRITICAL","title":"curl: POST following PUT confusion","url":"https://avd.aquasec.com/nvd/cve-2022-32221","cvss":9.8},{"id":"CVE-2023-23914","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r6","sev":"CRITICAL","title":"curl: HSTS ignored on multiple requests","url":"https://avd.aquasec.com/nvd/cve-2023-23914","cvss":9.1},{"id":"CVE-2023-38545","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.4.0-r0","sev":"CRITICAL","title":"curl: heap based buffer overflow in the SOCKS5 proxy handshake","url":"https://avd.aquasec.com/nvd/cve-2023-38545","cvss":9.8},{"id":"CVE-2022-27780","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"HIGH","title":"curl: percent-encoded path separator in URL host","url":"https://avd.aquasec.com/nvd/cve-2022-27780","cvss":7.5},{"id":"CVE-2022-27781","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"HIGH","title":"curl: CERTINFO never-ending busy-loop","url":"https://avd.aquasec.com/nvd/cve-2022-27781","cvss":7.5},{"id":"CVE-2022-27782","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"HIGH","title":"curl: TLS and SSH connection too eager reuse","url":"https://avd.aquasec.com/nvd/cve-2022-27782","cvss":7.5},{"id":"CVE-2022-42915","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r4","sev":"HIGH","title":"curl: HTTP proxy double-free","url":"https://avd.aquasec.com/nvd/cve-2022-42915","cvss":8.1},{"id":"CVE-2022-42916","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r4","sev":"HIGH","title":"curl: HSTS bypass via IDN","url":"https://avd.aquasec.com/nvd/cve-2022-42916","cvss":7.5},{"id":"CVE-2022-43551","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r5","sev":"HIGH","title":"curl: HSTS bypass via IDN","url":"https://avd.aquasec.com/nvd/cve-2022-43551","cvss":7.5},{"id":"CVE-2023-27533","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"HIGH","title":"curl: TELNET option IAC injection","url":"https://avd.aquasec.com/nvd/cve-2023-27533","cvss":8.8},{"id":"CVE-2023-27534","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"HIGH","title":"curl: SFTP path ~ resolving discrepancy","url":"https://avd.aquasec.com/nvd/cve-2023-27534","cvss":8.8},{"id":"CVE-2023-28319","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.1.0-r0","sev":"HIGH","title":"curl: use after free in SSH sha256 fingerprint check","url":"https://avd.aquasec.com/nvd/cve-2023-28319","cvss":7.5},{"id":"CVE-2023-38039","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.3.0-r0","sev":"HIGH","title":"curl: out of heap memory issue due to missing limit on header quantity","url":"https://avd.aquasec.com/nvd/cve-2023-38039","cvss":7.5},{"id":"CVE-2022-32205","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"MEDIUM","title":"curl: Set-Cookie denial of service","url":"https://avd.aquasec.com/nvd/cve-2022-32205","cvss":4.3},{"id":"CVE-2022-32206","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"MEDIUM","title":"curl: HTTP compression denial of service","url":"https://avd.aquasec.com/nvd/cve-2022-32206","cvss":6.5},{"id":"CVE-2022-32208","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r2","sev":"MEDIUM","title":"curl: FTP-KRB bad message verification","url":"https://avd.aquasec.com/nvd/cve-2022-32208","cvss":5.9},{"id":"CVE-2022-43552","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r5","sev":"MEDIUM","title":"curl: Use-after-free triggered by an HTTP proxy deny response","url":"https://avd.aquasec.com/nvd/cve-2022-43552","cvss":5.9},{"id":"CVE-2023-23915","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r6","sev":"MEDIUM","title":"curl: HSTS amnesia with --parallel","url":"https://avd.aquasec.com/nvd/cve-2023-23915","cvss":6.5},{"id":"CVE-2023-23916","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r6","sev":"MEDIUM","title":"curl: HTTP multi-header compression denial of service","url":"https://avd.aquasec.com/nvd/cve-2023-23916","cvss":6.5},{"id":"CVE-2023-27535","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"MEDIUM","title":"curl: FTP too eager connection reuse","url":"https://avd.aquasec.com/nvd/cve-2023-27535","cvss":5.9},{"id":"CVE-2023-27536","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"MEDIUM","title":"curl: GSS delegation too eager connection re-use","url":"https://avd.aquasec.com/nvd/cve-2023-27536","cvss":5.9},{"id":"CVE-2023-27537","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"MEDIUM","title":"curl: HSTS double-free","url":"https://avd.aquasec.com/nvd/cve-2023-27537","cvss":5.9},{"id":"CVE-2023-27538","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.0.1-r0","sev":"MEDIUM","title":"curl: SSH connection too eager reuse still","url":"https://avd.aquasec.com/nvd/cve-2023-27538","cvss":5.5},{"id":"CVE-2023-28320","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.1.0-r0","sev":"MEDIUM","title":"curl: siglongjmp race condition may lead to crash","url":"https://avd.aquasec.com/nvd/cve-2023-28320","cvss":5.9},{"id":"CVE-2023-28321","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.1.0-r0","sev":"MEDIUM","title":"curl: IDN wildcard match may lead to Improper Cerificate Validation","url":"https://avd.aquasec.com/nvd/cve-2023-28321","cvss":5.9},{"id":"CVE-2023-46218","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.5.0-r0","sev":"MEDIUM","title":"curl: information disclosure by exploiting a mixed case flaw","url":"https://avd.aquasec.com/nvd/cve-2023-46218","cvss":6.5},{"id":"CVE-2023-46219","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.5.0-r0","sev":"MEDIUM","title":"curl: excessively long file name may lead to unknown HSTS status","url":"https://avd.aquasec.com/nvd/cve-2023-46219","cvss":5.3},{"id":"CVE-2022-35252","pkg":"libcurl","inst":"7.80.0-r1","fix":"7.80.0-r3","sev":"LOW","title":"curl: Incorrect handling of control code characters in cookies","url":"https://avd.aquasec.com/nvd/cve-2022-35252","cvss":3.7},{"id":"CVE-2023-28322","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.1.0-r0","sev":"LOW","title":"curl: more POST-after-PUT confusion","url":"https://avd.aquasec.com/nvd/cve-2023-28322","cvss":3.7},{"id":"CVE-2023-38546","pkg":"libcurl","inst":"7.80.0-r1","fix":"8.4.0-r0","sev":"LOW","title":"curl: cookie injection with none file","url":"https://avd.aquasec.com/nvd/cve-2023-38546","cvss":3.7},{"id":"CVE-2022-4450","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r0","sev":"HIGH","title":"openssl: double free after calling PEM_read_bio_ex","url":"https://avd.aquasec.com/nvd/cve-2022-4450","cvss":7.5},{"id":"CVE-2023-0215","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r0","sev":"HIGH","title":"openssl: use-after-free following BIO_new_NDEF","url":"https://avd.aquasec.com/nvd/cve-2023-0215","cvss":7.5},{"id":"CVE-2023-0286","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r0","sev":"HIGH","title":"openssl: X.400 address type confusion in X.509 GeneralName","url":"https://avd.aquasec.com/nvd/cve-2023-0286","cvss":7.4},{"id":"CVE-2023-0464","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r2","sev":"HIGH","title":"openssl: Denial of service by excessive resource usage in verifying X509 policy constraints","url":"https://avd.aquasec.com/nvd/cve-2023-0464","cvss":7.5},{"id":"CVE-2022-2097","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1q-r0","sev":"MEDIUM","title":"openssl: AES OCB fails to encrypt some bytes","url":"https://avd.aquasec.com/nvd/cve-2022-2097","cvss":5.3},{"id":"CVE-2022-4304","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r0","sev":"MEDIUM","title":"openssl: timing attack in RSA Decryption implementation","url":"https://avd.aquasec.com/nvd/cve-2022-4304","cvss":5.9},{"id":"CVE-2023-0465","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1t-r2","sev":"MEDIUM","title":"openssl: Invalid certificate policies in leaf certificates are silently ignored","url":"https://avd.aquasec.com/nvd/cve-2023-0465","cvss":5.3},{"id":"CVE-2023-2650","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1u-r0","sev":"MEDIUM","title":"openssl: Possible DoS translating ASN.1 object identifiers","url":"https://avd.aquasec.com/nvd/cve-2023-2650","cvss":6.5},{"id":"CVE-2023-3446","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1u-r2","sev":"MEDIUM","title":"openssl: Excessive time spent checking DH keys and parameters","url":"https://avd.aquasec.com/nvd/cve-2023-3446","cvss":5.3},{"id":"CVE-2023-3817","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1v-r0","sev":"MEDIUM","title":"OpenSSL: Excessive time spent checking DH q parameter value","url":"https://avd.aquasec.com/nvd/cve-2023-3817","cvss":5.3},{"id":"CVE-2023-5678","pkg":"libssl1.1","inst":"1.1.1n-r0","fix":"1.1.1w-r1","sev":"MEDIUM","title":"openssl: Generating excessively long X9.42 DH keys or checking excessively long X9.42 DH keys or parameters may be very slow","url":"https://avd.aquasec.com/nvd/cve-2023-5678","cvss":5.3},{"id":"CVE-2023-1999","pkg":"libwebp","inst":"1.2.2-r0","fix":"1.2.2-r1","sev":"HIGH","title":"Mozilla: libwebp: Double-free in libwebp","url":"https://avd.aquasec.com/nvd/cve-2023-1999","cvss":7.5},{"id":"CVE-2023-4863","pkg":"libwebp","inst":"1.2.2-r0","fix":"1.2.2-r2","sev":"HIGH","title":"libwebp: Heap buffer overflow in WebP Codec","url":"https://avd.aquasec.com/nvd/cve-2023-4863","cvss":8.8},{"id":"CVE-2022-2309","pkg":"libxml2","inst":"2.9.14-r0","fix":"2.9.14-r1","sev":"HIGH","title":"lxml: NULL Pointer Dereference in lxml","url":"https://avd.aquasec.com/nvd/cve-2022-2309","cvss":7.5},{"id":"CVE-2022-40303","pkg":"libxml2","inst":"2.9.14-r0","fix":"2.9.14-r2","sev":"HIGH","title":"libxml2: integer overflows with XML_PARSE_HUGE","url":"https://avd.aquasec.com/nvd/cve-2022-40303","cvss":7.5},{"id":"CVE-2022-40304","pkg":"libxml2","inst":"2.9.14-r0","fix":"2.9.14-r2","sev":"HIGH","title":"libxml2: dict corruption caused by entity reference cycles","url":"https://avd.aquasec.com/nvd/cve-2022-40304","cvss":7.8},{"id":"CVE-2022-29458","pkg":"ncurses-libs","inst":"6.3_p20211120-r0","fix":"6.3_p20211120-r1","sev":"HIGH","title":"ncurses: segfaulting OOB read","url":"https://avd.aquasec.com/nvd/cve-2022-29458","cvss":7.1},{"id":"CVE-2023-29491","pkg":"ncurses-libs","inst":"6.3_p20211120-r0","fix":"6.3_p20211120-r2","sev":"HIGH","title":"ncurses: Local users can trigger security-relevant memory corruption via malformed data","url":"https://avd.aquasec.com/nvd/cve-2023-29491","cvss":7.8},{"id":"CVE-2022-29458","pkg":"ncurses-terminfo-base","inst":"6.3_p20211120-r0","fix":"6.3_p20211120-r1","sev":"HIGH","title":"ncurses: segfaulting OOB read","url":"https://avd.aquasec.com/nvd/cve-2022-29458","cvss":7.1},{"id":"CVE-2023-29491","pkg":"ncurses-terminfo-base","inst":"6.3_p20211120-r0","fix":"6.3_p20211120-r2","sev":"HIGH","title":"ncurses: Local users can trigger security-relevant memory corruption via malformed data","url":"https://avd.aquasec.com/nvd/cve-2023-29491","cvss":7.8},{"id":"CVE-2023-35945","pkg":"nghttp2-libs","inst":"1.46.0-r0","fix":"1.46.0-r1","sev":"HIGH","title":"envoy: HTTP/2 memory leak in nghttp2 codec","url":"https://avd.aquasec.com/nvd/cve-2023-35945","cvss":7.5},{"id":"CVE-2023-44487","pkg":"nghttp2-libs","inst":"1.46.0-r0","fix":"1.46.0-r2","sev":"HIGH","title":"HTTP/2: Multiple HTTP/2 enabled web servers are vulnerable to a DDoS attack (Rapid Reset Attack)","url":"https://avd.aquasec.com/nvd/cve-2023-44487","cvss":7.5},{"id":"CVE-2022-1586","pkg":"pcre2","inst":"10.39-r0","fix":"10.40-r0","sev":"CRITICAL","title":"pcre2: Out-of-bounds read in compile_xclass_matchingpath in pcre2_jit_compile.c","url":"https://avd.aquasec.com/nvd/cve-2022-1586","cvss":9.1},{"id":"CVE-2022-1587","pkg":"pcre2","inst":"10.39-r0","fix":"10.40-r0","sev":"CRITICAL","title":"pcre2: Out-of-bounds read in get_recurse_data_length in pcre2_jit_compile.c","url":"https://avd.aquasec.com/nvd/cve-2022-1587","cvss":9.1},{"id":"CVE-2022-41409","pkg":"pcre2","inst":"10.39-r0","fix":"10.42-r0","sev":"HIGH","title":"pcre2: negative repeat value in a pcre2test subject line leads to inifinite loop","url":"https://avd.aquasec.com/nvd/cve-2022-41409","cvss":7.5},{"id":"CVE-2022-37434","pkg":"zlib","inst":"1.2.12-r0","fix":"1.2.12-r2","sev":"CRITICAL","title":"zlib: heap-based buffer over-read and overflow in inflate() in inflate.c via a large gzip header extra field","url":"https://avd.aquasec.com/nvd/cve-2022-37434","cvss":9.8}]},"v2":{"target":"trivy-demo:v2 (alpine 3.24.2)","os":{"Family":"alpine","Name":"3.24.2"},"size":63133696,"created":"2026-10-05T14:25:50.954191+05:30","vulns":[{"id":"CVE-2026-93990","pkg":"libexpat","inst":"2.8.4-r0","fix":"2.8.5-r0","sev":"HIGH","title":"expat: Expat: XML Injection via Malformed UTF-16 Input","url":"https://avd.aquasec.com/nvd/cve-2026-93990","cvss":7.5},{"id":"CVE-2026-46675","pkg":"libpng","inst":"1.6.58-r1","fix":"1.6.59-r0","sev":"UNKNOWN","title":"[Use-after-free of zlib input in `png_read_end` after incomplete zTXt, iTXt or iCCP decompression]","url":"https://avd.aquasec.com/nvd/cve-2026-46675","cvss":null},{"id":"CVE-2026-58055","pkg":"nghttp2-libs","inst":"1.69.0-r0","fix":"1.70.0-r0","sev":"MEDIUM","title":"nghttp2: nghttp2: HTTP Request/Response Smuggling and Response-Queue Poisoning via ambiguous HTTP/1.1 Upgrade requests","url":"https://avd.aquasec.com/nvd/cve-2026-58055","cvss":5.4},{"id":"CVE-2026-103111","pkg":"pcre2","inst":"10.48-r0","fix":"10.49-r0","sev":"HIGH","title":"pcre2: pcre2: Out-of-bounds write via crafted regular expression","url":"https://avd.aquasec.com/nvd/cve-2026-103111","cvss":7.6}]},"v3":{"target":"trivy-demo:v3 (alpine 3.24.2)","os":{"Family":"alpine","Name":"3.24.2"},"size":70741504,"created":"2026-10-05T14:36:01.768243+05:30","vulns":[]}};
+const SEVS = ["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"];
+const SEVVAR = {CRITICAL:"--crit",HIGH:"--high",MEDIUM:"--med",LOW:"--low",UNKNOWN:"--unk"};
+const css = v => `var(${SEVVAR[v]})`;
+const INFO = {
+  v1:{label:"Baseline",base:"nginx:1.21-alpine",change:"None (baseline)",pkgs:42,eol:true,sizeDisk:"36.1 MB",report:"before.json",
+      docker:'<span class="c"># v1 - baseline (outdated base image)</span>\nFROM nginx:1.21-alpine\nCOPY app/index.html /usr/share/nginx/html/index.html\nEXPOSE 80',
+      note:"Trivy warned that <b>Alpine 3.15 is end of life</b>, so detection may even be incomplete. Every finding came from the base image, not the app."},
+  v2:{label:"New base image",base:"nginx:1.30.5-alpine3.24",change:"One line: updated FROM",pkgs:71,eol:false,sizeDisk:"92 MB",report:"after.json",
+      docker:'<span class="c"># v2 - remediation 1: updated base image</span>\n<span class="del">- FROM nginx:1.21-alpine</span>\n<span class="add">+ FROM nginx:1.30.5-alpine3.24</span>\nCOPY app/index.html /usr/share/nginx/html/index.html\nEXPOSE 80',
+      note:"A single-line change removed <b>97 of 101</b> findings (96%), including all 11 Critical. Four remain because fixes were released after this base image was published."},
+  v3:{label:"Hardened",base:"nginx:1.30.5-alpine3.24",change:"+ RUN apk upgrade --no-cache",pkgs:71,eol:false,sizeDisk:"≈ 92 MB",report:"final.json",
+      docker:'<span class="c"># v3 - remediation 2: package-level upgrade</span>\nFROM nginx:1.30.5-alpine3.24\n<span class="add">+ RUN apk upgrade --no-cache</span>\nCOPY app/index.html /usr/share/nginx/html/index.html\nEXPOSE 80',
+      note:"<b>Zero known vulnerabilities.</b> The container was deployed on port 8081 and the page still served correctly. Zero means none known today, so rescans stay scheduled."}
+};
+const counts = v => { const c={}; SEVS.forEach(s=>c[s]=0); DATA[v].vulns.forEach(x=>c[x.sev]++); return c; };
+const fixableHC = v => DATA[v].vulns.filter(x=>(x.sev==="CRITICAL"||x.sev==="HIGH")&&x.fix).length;
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let cur = "v1", sevFilter = "ALL", pipeV = "v1";
+try{ const h=location.hash.slice(1); if(DATA[h]) {cur=h;pipeV=h;} }catch(e){}
+
+function renderHero(){
+  const el=document.getElementById("hero"); el.innerHTML="";
+  ["v1","v2","v3"].forEach((v,i)=>{
+    const c=counts(v), tot=DATA[v].vulns.length;
+    const b=document.createElement("button"); b.className="hcell"; b.setAttribute("aria-pressed",v===cur);
+    const bar = tot? SEVS.map(s=>c[s]?`<span style="width:${c[s]/tot*100}%;background:${css(s)}"></span>`:"").join("") : `<span style="width:100%;background:var(--ok)"></span>`;
+    b.innerHTML=`<span class="tag">trivy-demo:${v} <span class="arrow">· ${INFO[v].label}</span></span>
+      <span class="big" style="color:${tot?(c.CRITICAL?'var(--crit)':'var(--high)'):'var(--ok)'}">${tot}</span>
+      <span class="sub">${tot?`${c.CRITICAL} critical · ${c.HIGH} high · ${c.MEDIUM+c.LOW+c.UNKNOWN} other`:"no known vulnerabilities"}</span>
+      <span class="stack">${bar}</span>`;
+    b.onclick=()=>{cur=v;sevFilter="ALL";render();};
+    el.appendChild(b);
+  });
+}
+function renderVersion(){
+  const d=DATA[cur], I=INFO[cur], tot=d.vulns.length, fx=fixableHC(cur);
+  document.getElementById("vtitle").textContent=`trivy-demo:${cur} — ${I.label}`;
+  document.getElementById("vpill").innerHTML = fx? `<span class="pill bad">GATE: FAIL · ${fx} fixable HIGH/CRIT</span>` : `<span class="pill good">GATE: PASS</span>`;
+  document.getElementById("vkv").innerHTML=`
+    <dt>Base image</dt><dd>${I.base}</dd>
+    <dt>Operating system</dt><dd>Alpine ${d.os.Name}${I.eol?' <span class="pill bad" style="margin-left:6px">EOL</span>':''}</dd>
+    <dt>OS packages</dt><dd>${I.pkgs}</dd>
+    <dt>Change applied</dt><dd>${I.change}</dd>
+    <dt>Image size</dt><dd>${I.sizeDisk} on disk</dd>
+    <dt>Report</dt><dd>reports/${I.report}</dd>`;
+  document.getElementById("vdocker").innerHTML=I.docker;
+  document.getElementById("vnote").innerHTML=I.note;
+  const c=counts(cur), mx=Math.max(1,...Object.values(counts("v1")));
+  document.getElementById("sev").innerHTML=SEVS.map(s=>`<div class="sevrow"><span><i class="dot" style="background:${css(s)}"></i>${s[0]+s.slice(1).toLowerCase()}</span><span class="bar"><span style="width:${c[s]/mx*100}%;background:${css(s)}"></span></span><span class="n num">${c[s]}</span></div>`).join("");
+}
+function renderTrend(){
+  const W=420,H=190,pl=36,pr=12,pt=22,pb=34, max=110, vs=["v1","v2","v3"];
+  const bw=(W-pl-pr)/3, y=v=>pt+(H-pt-pb)*(1-v/max);
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Total vulnerabilities: v1 101, v2 4, v3 0">`;
+  [0,25,50,75,100].forEach(t=>{s+=`<line x1="${pl}" x2="${W-pr}" y1="${y(t)}" y2="${y(t)}" stroke="var(--line)" stroke-width="1"/><text x="${pl-6}" y="${y(t)+4}" text-anchor="end">${t}</text>`;});
+  vs.forEach((v,i)=>{
+    const c=counts(v), x=pl+i*bw+bw*0.22, w=bw*0.56; let base=y(0);
+    SEVS.slice().reverse().forEach(sv=>{ if(!c[sv])return; const h=y(0)-y(c[sv]); s+=`<rect x="${x}" y="${base-h}" width="${w}" height="${Math.max(h,1)}" fill="${css(sv)}" opacity="${v===cur?1:.55}"/>`; base-=h; });
+    const tot=DATA[v].vulns.length;
+    s+=`<text class="lbl" x="${x+w/2}" y="${y(tot)-6}" text-anchor="middle" style="fill:${tot?'var(--fg)':'var(--ok)'}">${tot}</text>`;
+    s+=`<text x="${x+w/2}" y="${H-12}" text-anchor="middle" style="${v===cur?'fill:var(--fg);font-weight:600':''}">${v}</text>`;
+  });
+  s+=`<line x1="${pl}" x2="${W-pr}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-width="1"/></svg>`;
+  document.getElementById("trend").innerHTML=s;
+}
+function renderChips(){
+  const c=counts(cur), el=document.getElementById("chips"); el.innerHTML="";
+  ["ALL",...SEVS].forEach(s=>{
+    const n = s==="ALL"?DATA[cur].vulns.length:c[s]; if(s!=="ALL"&&!n) return;
+    const b=document.createElement("button"); b.className="chip"; b.setAttribute("aria-pressed",s===sevFilter);
+    b.innerHTML=(s==="ALL"?"All":`<i class="dot" style="background:${css(s)}"></i>${s}`)+` · ${n}`;
+    b.onclick=()=>{sevFilter=s;renderChips();renderTable();}; el.appendChild(b);
+  });
+}
+function renderTable(){
+  const q=document.getElementById("q").value.trim().toLowerCase();
+  const all=DATA[cur].vulns, order=Object.fromEntries(SEVS.map((s,i)=>[s,i]));
+  const rows=all.filter(x=>(sevFilter==="ALL"||x.sev===sevFilter)&&(!q||(x.id+" "+x.pkg+" "+x.title).toLowerCase().includes(q)))
+                .sort((a,b)=>order[a.sev]-order[b.sev]||(b.cvss||0)-(a.cvss||0));
+  document.getElementById("ccount").textContent=`${rows.length} of ${all.length} shown · trivy-demo:${cur}`;
+  const pk={}; all.forEach(x=>pk[x.pkg]=(pk[x.pkg]||0)+1);
+  const top=Object.entries(pk).sort((a,b)=>b[1]-a[1]);
+  document.getElementById("pkgs").innerHTML= top.length? "Affected packages: "+top.map(([p,n])=>`<span class="mono" style="color:var(--fg)">${esc(p)}</span>&nbsp;${n}`).join(" · ") : "";
+  const tw=document.getElementById("tw");
+  if(!all.length){ tw.innerHTML=`<div class="empty"><b>0 vulnerabilities</b>Trivy found no known CVEs in trivy-demo:${cur} (Alpine ${DATA[cur].os.Name}, ${INFO[cur].pkgs} packages).</div>`; return; }
+  if(!rows.length){ tw.innerHTML=`<div class="empty">No findings match “${esc(q)}”. Clear the filter to see all ${all.length}.</div>`; return; }
+  tw.innerHTML=`<table><thead><tr><th>Severity</th><th>CVE</th><th>Package</th><th>Installed</th><th>Fixed in</th><th>CVSS</th><th>Title</th></tr></thead><tbody>${
+    rows.map(x=>`<tr><td class="sev"><span class="sevtag" style="background:${css(x.sev)}">${x.sev}</span></td>
+      <td class="mono"><a href="${esc(x.url)}" target="_blank" rel="noopener">${x.id}</a></td>
+      <td class="mono">${esc(x.pkg)}</td><td class="mono">${esc(x.inst)}</td><td class="mono" style="color:var(--ok)">${esc(x.fix||"—")}</td>
+      <td class="mono num">${x.cvss??"—"}</td><td>${esc(x.title)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+/* pipeline */
+const STAGES=[
+  {nm:"Checkout",cmd:"checkout scm"},
+  {nm:"Build",cmd:"docker build -t trivy-demo:<v>"},
+  {nm:"Trivy scan",cmd:"trivy image --format json"},
+  {nm:"Security gate",cmd:"--exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed"},
+  {nm:"Deploy",cmd:"docker run -p 8081:80"}];
+function renderPipe(states){
+  document.getElementById("pipe").innerHTML=STAGES.map((s,i)=>{
+    const st=states?states[i]:"wait", lab={wait:"Waiting",run:"Running…",pass:"Passed",fail:"Failed",skip:"Skipped"}[st];
+    return `<div class="stage ${st}"><span class="st">${i+1} · ${lab}</span><span class="nm">${s.nm}</span><span class="cmd">${s.cmd.replace("<v>",pipeV)}</span></div>`;}).join("");
+}
+function renderPChips(){
+  const el=document.getElementById("pchips"); el.innerHTML="";
+  ["v1","v2","v3"].forEach(v=>{const b=document.createElement("button");b.className="chip";b.setAttribute("aria-pressed",v===pipeV);b.textContent="trivy-demo:"+v;
+    b.onclick=()=>{if(running)return;pipeV=v;renderPChips();renderPipe();document.getElementById("log").innerHTML='<span class="d">Press Run pipeline.</span>';};el.appendChild(b);});
+}
+let running=false;
+const sleep=ms=>new Promise(r=>setTimeout(r,matchMedia("(prefers-reduced-motion: reduce)").matches?0:ms));
+async function runPipe(){
+  if(running)return; running=true; const btn=document.getElementById("runbtn"); btn.disabled=true;
+  const v=pipeV, log=document.getElementById("log"), st=STAGES.map(()=>"wait"), c=counts(v), tot=DATA[v].vulns.length;
+  const fx=DATA[v].vulns.filter(x=>(x.sev==="CRITICAL"||x.sev==="HIGH")&&x.fix);
+  let out=""; const w=(s,cls="")=>{out+=(cls?`<span class="${cls}">${s}</span>`:s)+"\n";log.innerHTML=out;log.scrollTop=log.scrollHeight;};
+  const step=async(i,ms)=>{st[i]="run";renderPipe(st);await sleep(ms);};
+  await step(0,500); w("$ git checkout main","d"); w("✓ checked out app/, Dockerfile"); st[0]="pass";
+  await step(1,800); w(`$ docker build -f dockerfiles/Dockerfile.${v} -t trivy-demo:${v} .`,"d"); w(`✓ image built (${INFO[v].base})`); st[1]="pass";
+  await step(2,900); w(`$ trivy image --format json --output reports/${INFO[v].report} trivy-demo:${v}`,"d");
+  if(INFO[v].eol) w("WARN  This OS version is no longer supported by the distribution (alpine 3.15.4)","e");
+  w(`Total: ${tot} (CRITICAL: ${c.CRITICAL}, HIGH: ${c.HIGH}, MEDIUM: ${c.MEDIUM}, LOW: ${c.LOW}, UNKNOWN: ${c.UNKNOWN})`); st[2]="pass";
+  await step(3,900); w(`$ trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed trivy-demo:${v}`,"d");
+  if(fx.length){
+    fx.slice(0,4).forEach(x=>w(`  ${x.pkg.padEnd(14)} ${x.id.padEnd(16)} ${x.sev.padEnd(9)} ${x.inst} → ${x.fix}`));
+    if(fx.length>4) w(`  … ${fx.length-4} more`,"d");
+    w(`✗ exit code 1 · ${fx.length} fixable HIGH/CRITICAL · pipeline stopped`,"e"); st[3]="fail"; st[4]="skip";
+  } else {
+    w("Total: 0 (HIGH: 0, CRITICAL: 0)"); w("✓ exit code 0 · Security gate passed","o"); st[3]="pass";
+    renderPipe(st); await step(4,800);
+    w("$ docker run -d --name trivy-demo-container -p 8081:80 trivy-demo:"+v,"d"); w("$ curl http://localhost:8081","d"); w("<h1>Container Security Demo</h1>"); w("✓ deployed and verified","o"); st[4]="pass";
+  }
+  renderPipe(st); running=false; btn.disabled=false;
+}
+document.getElementById("runbtn").onclick=runPipe;
+document.getElementById("q").addEventListener("input",renderTable);
+
+function render(){renderHero();renderVersion();renderTrend();renderChips();renderTable();}
+render(); renderPChips(); renderPipe();
+</script>
+
+</body></html>
